@@ -16,7 +16,7 @@
 ## 단계 1. Quote를 파싱한다
 
 코드 위치:
-- `quote.go`
+- `internal/tdxattest/quote.go`
 
 여기서 분리되는 것:
 - Quote header/body
@@ -32,8 +32,8 @@
 ## 단계 2. Quote 안의 PCK chain을 검증한다
 
 코드 위치:
-- `quote_verify.go`
-- `certs.go`
+- `internal/tdxattest/quote_verify.go`
+- `internal/tdxattest/certs.go`
 
 무엇을 보나:
 - Quote 안 PCK leaf가 Intel Root CA까지 정상 체인인지
@@ -44,7 +44,7 @@
 ## 단계 3. CRL로 폐기 여부를 확인한다
 
 코드 위치:
-- `crl.go`
+- `internal/tdxattest/crl.go`
 
 무엇을 보나:
 - `pck_platform_crl.der`로 PCK leaf serial 확인
@@ -56,7 +56,7 @@
 ## 단계 4. QE report와 Quote signature를 검증한다
 
 코드 위치:
-- `quote_verify.go`
+- `internal/tdxattest/quote_verify.go`
 
 무엇을 보나:
 - PCK leaf 공개키로 QE report signature 검증
@@ -69,7 +69,7 @@
 ## 단계 5. TCB Info를 검증한다
 
 코드 위치:
-- `collateral.go`
+- `internal/tdxattest/collateral.go`
 
 무엇을 보나:
 - TCB Info JSON 서명
@@ -86,7 +86,7 @@
 ## 단계 6. QE Identity를 검증한다
 
 코드 위치:
-- `collateral.go`
+- `internal/tdxattest/collateral.go`
 
 무엇을 보나:
 - QE Identity JSON 서명
@@ -101,7 +101,7 @@
 ## 단계 7. TDX measurement를 비교한다 (선택)
 
 코드 위치:
-- `tdx.go`
+- `internal/tdxattest/tdx.go`
 
 무엇을 보나:
 - `MRTD`
@@ -117,7 +117,7 @@
 ## 샘플 실행 명령
 
 ```bash
-go run . \
+go run ./cmd/tdx-attest verify \
   -sample-time 2023-02-01T00:00:00Z \
   -ignore-freshness \
   -tdx-policy test_data/tdx_policy_sample.json

@@ -15,7 +15,17 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("failed to resolve test file path")
 	}
-	return filepath.Dir(file)
+	dir := filepath.Dir(file)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("failed to find repo root from %s", file)
+		}
+		dir = parent
+	}
 }
 
 func samplePath(root string, parts ...string) string {
@@ -25,7 +35,7 @@ func samplePath(root string, parts ...string) string {
 
 func TestSampleVerificationPassesWithSampleTimeAndIgnoredFreshness(t *testing.T) {
 	root := repoRoot(t)
-	cmd := exec.Command("go", "run", ".",
+	cmd := exec.Command("go", "run", "./cmd/tdx-attest",
 		"-quote", samplePath(root, "quote.dat"),
 		"-root", samplePath(root, "certs", "Intel_SGX_Provisioning_Certification_RootCA.pem"),
 		"-tcbinfo", samplePath(root, "collateral", "tcbinfo.json"),
@@ -64,7 +74,7 @@ func TestSampleVerificationPassesWithSampleTimeAndIgnoredFreshness(t *testing.T)
 
 func TestSampleVerificationFailsWithoutFreshnessOverride(t *testing.T) {
 	root := repoRoot(t)
-	cmd := exec.Command("go", "run", ".",
+	cmd := exec.Command("go", "run", "./cmd/tdx-attest",
 		"-quote", samplePath(root, "quote.dat"),
 		"-root", samplePath(root, "certs", "Intel_SGX_Provisioning_Certification_RootCA.pem"),
 		"-tcbinfo", samplePath(root, "collateral", "tcbinfo.json"),
@@ -87,7 +97,7 @@ func TestSampleVerificationFailsWithoutFreshnessOverride(t *testing.T) {
 
 func TestSampleTDXPolicyPasses(t *testing.T) {
 	root := repoRoot(t)
-	cmd := exec.Command("go", "run", ".",
+	cmd := exec.Command("go", "run", "./cmd/tdx-attest",
 		"-sample-time", "2023-02-01T00:00:00Z",
 		"-ignore-freshness",
 		"-tdx-policy", samplePath(root, "tdx_policy_sample.json"),
@@ -109,7 +119,7 @@ func TestSampleTDXPolicyFailsOnMismatch(t *testing.T) {
 		t.Fatalf("write bad policy: %v", err)
 	}
 
-	cmd := exec.Command("go", "run", ".",
+	cmd := exec.Command("go", "run", "./cmd/tdx-attest",
 		"-sample-time", "2023-02-01T00:00:00Z",
 		"-ignore-freshness",
 		"-tdx-policy", badPolicy,

@@ -4,18 +4,27 @@
 
 ```mermaid
 flowchart TD
-    MAIN[main.go
-입력/전체 orchestration] --> QUOTE[quote.go
+    CMD[cmd/tdx-attest/main.go
+권장 CLI entrypoint] --> CLI
+    CLI[cmd/tdx-attest/cli
+Cobra command tree]
+    CLI --> QUOTE[internal/tdxattest/quote.go
 Quote 파싱]
-    MAIN --> QV[quote_verify.go
+    CLI --> PIPE[internal/tdxattest/verifier.go
+구조화된 검증 pipeline]
+    CLI --> SYNCLI[internal/tdxattest/synthetic_cli.go
+synthetic quote CLI]
+    CLI --> QV[internal/tdxattest/quote_verify.go
 Quote 암호학 검증]
-    MAIN --> CRL[crl.go
+    SYNCLI --> SYN[internal/tdxattest/synthetic_quote.go
+테스트용 quote 생성/검증]
+    APP --> CRL[internal/tdxattest/crl.go
 CRL 검증]
-    MAIN --> COL[collateral.go
+    APP --> COL[internal/tdxattest/collateral.go
 TCB Info / QE Identity 검증]
-    MAIN --> TDX[tdx.go
+    APP --> TDX[internal/tdxattest/tdx.go
 TDX measurement 추출/정책 비교]
-    QV --> CERT[certs.go
+    QV --> CERT[internal/tdxattest/certs.go
 인증서 유틸]
     COL --> CERT
     CRL --> CERT
@@ -27,22 +36,64 @@ TDX measurement 추출/정책 비교]
 
 ## 파일별 역할
 
-### `main.go`
-프로그램의 진입점입니다.
+### `cmd/tdx-attest/main.go`
+CLI entrypoint입니다.
 
-- CLI 옵션 파싱
-- 기본 경로 설정
-- 전체 검증 순서 orchestration
-- 최종 요약 출력
+- release/build 대상 command
+- 루트 wrapper와 동일하게 `cmd/tdx-attest/cli.Execute` 호출
 
-### `quote.go`
+### `cmd/tdx-attest/cli/cli.go`
+Cobra command tree와 command별 flag를 담당합니다.
+
+- `verify` / `synthesize` subcommand routing
+- subcommand 없는 legacy verify 경로 유지
+- 기존 single-dash long flag 호환성 유지 (`-sample-time` 등)
+- Cobra 의존성은 이 `cmd` 하위 패키지에만 존재
+
+### `pkg/tdxattest/tdxattest.go`
+외부 호출자가 사용할 수 있는 최소 non-CLI 공개 API입니다.
+
+- `GenerateSyntheticQuote()`
+- `VerifySyntheticQuoteCrypto(...)`
+- internal 세부 타입이 공개 API에 새지 않도록 얇은 wrapper만 제공
+- Cobra나 command wiring은 포함하지 않음
+
+### `internal/tdxattest/app.go`
+검증 실행 helper와 기본 config를 담당합니다.
+
+- `DefaultConfig()`
+- `RunVerify(config)`
+
+### `internal/tdxattest/verifier.go`
+기존 전체 검증 순서를 구조화된 요청/결과 API로 감싼 pipeline입니다.
+
+- `VerificationRequest` / `VerificationResult`
+- 기존 Intel collateral 검증 순서 실행
+- CLI 출력은 유지하면서 테스트와 future API가 결과 구조체를 참조할 수 있게 함
+
+### `internal/tdxattest/synthetic_quote.go`
+Intel이 서명하지 않은 테스트용 synthetic quote 생성/로컬 검증 파일입니다.
+
+- 테스트 root/intermediate/PCK leaf 생성
+- QE report signature 생성
+- AK binding용 `report_data[0:32]` 채우기
+- attestation key로 quote header/body self-sign
+- synthetic root 기반 로컬 암호학 검증
+
+### `internal/tdxattest/synthetic_cli.go`
+Synthetic quote 전용 CLI입니다.
+
+- `synthesize`: synthetic quote와 synthetic root 생성
+- Intel collateral/CRL/TCB 정책 검증은 의도적으로 수행하지 않음
+
+### `internal/tdxattest/quote.go`
 Quote 파싱 전용 파일입니다.
 
 - Quote header/body 분리
 - TDX/SGX body size 판별
 - Quote signature / AK / QE report / certification data 추출
 
-### `quote_verify.go`
+### `internal/tdxattest/quote_verify.go`
 Quote 암호학 검증 전용 파일입니다.
 
 - PCK chain 검증
@@ -50,13 +101,13 @@ Quote 암호학 검증 전용 파일입니다.
 - AK binding 검증
 - Quote signature 검증
 
-### `tdx.go`
+### `internal/tdxattest/tdx.go`
 TDX measurement 추출 / 정책 비교 전용 파일입니다.
 
 - TD report body에서 `MRTD`, `RTMR`, `REPORTDATA` 등 추출
 - 사용자가 제공한 policy JSON과 exact match 비교
 
-### `collateral.go`
+### `internal/tdxattest/collateral.go`
 Intel collateral(JSON) 검증 전용 파일입니다.
 
 - TCB Info 검증
@@ -64,7 +115,7 @@ Intel collateral(JSON) 검증 전용 파일입니다.
 - FMSPC / PCEID / TCB level / TDX module policy 확인
 - QE identity 정책 확인
 
-### `crl.go`
+### `internal/tdxattest/crl.go`
 CRL 검증 전용 파일입니다.
 
 - PCK CRL 로드/서명 검증
@@ -72,7 +123,7 @@ CRL 검증 전용 파일입니다.
 - freshness 확인
 - revocation 여부 확인
 
-### `certs.go`
+### `internal/tdxattest/certs.go`
 인증서 공통 유틸리티입니다.
 
 - PEM cert 파싱
@@ -81,7 +132,7 @@ CRL 검증 전용 파일입니다.
 - 공통 chain verify
 - cert 출력
 
-### `main_integration_test.go`
+### `internal/tdxattest/*_test.go`
 샘플 실행 회귀 테스트입니다.
 
 - 샘플 검증 성공 테스트
@@ -93,7 +144,7 @@ CRL 검증 전용 파일입니다.
 ```mermaid
 sequenceDiagram
     participant U as 사용자/CLI
-    participant M as main.go
+    participant M as app.go
     participant Q as quote.go
     participant V as quote_verify.go
     participant C as crl.go

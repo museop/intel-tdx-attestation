@@ -1,4 +1,4 @@
-package main
+package tdxattest
 
 import (
 	"encoding/hex"
