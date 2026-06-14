@@ -5,6 +5,7 @@
 package tdxattest
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
 	"time"
 
@@ -19,9 +20,43 @@ type SyntheticQuoteBundle struct {
 	PCKChainPEM []byte
 }
 
+// SyntheticRootBundle contains a synthetic test root CA certificate and
+// private key for generating non-Intel synthetic quotes.
+type SyntheticRootBundle struct {
+	RootKeyPEM  []byte
+	RootCertPEM []byte
+}
+
 // GenerateSyntheticQuote builds a non-Intel synthetic quote for local tests.
 func GenerateSyntheticQuote() (*SyntheticQuoteBundle, error) {
 	bundle, err := core.GenerateSyntheticQuote()
+	if err != nil {
+		return nil, err
+	}
+	return &SyntheticQuoteBundle{
+		Quote:       bundle.Quote,
+		RootCertPEM: bundle.RootCertPEM,
+		PCKChainPEM: bundle.PCKChainPEM,
+	}, nil
+}
+
+// GenerateSyntheticRoot creates reusable non-Intel synthetic test root
+// material for local tests.
+func GenerateSyntheticRoot() (*SyntheticRootBundle, error) {
+	bundle, err := core.GenerateSyntheticRoot()
+	if err != nil {
+		return nil, err
+	}
+	return &SyntheticRootBundle{
+		RootKeyPEM:  bundle.RootKeyPEM,
+		RootCertPEM: bundle.RootCertPEM,
+	}, nil
+}
+
+// GenerateSyntheticQuoteWithRoot builds a non-Intel synthetic quote using the
+// caller-provided synthetic test root.
+func GenerateSyntheticQuoteWithRoot(rootKey *ecdsa.PrivateKey, rootCert *x509.Certificate) (*SyntheticQuoteBundle, error) {
+	bundle, err := core.GenerateSyntheticQuoteWithRoot(rootKey, rootCert)
 	if err != nil {
 		return nil, err
 	}

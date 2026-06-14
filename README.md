@@ -37,26 +37,34 @@ go run ./cmd/tdx-attest verify \
 ### Synthetic self-signed Quote 생성/검증
 
 실험/테스트용으로 Intel이 서명하지 않은 synthetic quote를 만들 수 있습니다.
-이 quote는 **Intel Root CA 기반 검증을 통과하면 안 되며**, 별도 synthetic test root를 명시한
-`verify -mode synthetic` 경로에서 로컬 암호학 관계만 확인합니다.
+Synthetic test root 생성과 synthetic quote 생성은 별도 subcommand로 분리되어 있어, 같은 root로
+여러 quote를 만들 수 있습니다. 이 quote는 **Intel Root CA 기반 전체 검증을 통과하면 안 되며**,
+`verify -check quote-crypto`처럼 필요한 검증 항목을 명시해 로컬 암호학 관계만 확인합니다.
 
 ```bash
-go run ./cmd/tdx-attest synthesize \
+go run ./cmd/tdx-attest synthetic-root \
+  -root-key-out /tmp/synthetic_root_key.pem \
+  -root-out /tmp/synthetic_root.pem
+
+go run ./cmd/tdx-attest synthetic-quote \
   -quote-out /tmp/synthetic_quote.dat \
-  -root-out /tmp/synthetic_root.pem \
+  -root-key /tmp/synthetic_root_key.pem \
+  -root /tmp/synthetic_root.pem \
   -pck-chain-out /tmp/synthetic_pck_chain.pem
 
 go run ./cmd/tdx-attest verify \
-  -mode synthetic \
+  -check quote-crypto \
   -quote /tmp/synthetic_quote.dat \
   -root /tmp/synthetic_root.pem
 ```
 
-`verify`의 기본 mode는 `intel`입니다. 즉, `-mode synthetic`을 명시하지 않으면 Intel Root CA와
-Intel collateral 기반의 real quote 검증 경로로 동작합니다.
+`verify`는 `-mode`로 Intel/synthetic을 나누지 않습니다. 기본값은 기존처럼 Intel collateral 기반
+전체 검증이며, 필요한 경우 `-check`를 반복하거나 comma-separated 값으로 선택 검증을 추가합니다.
+예: `-check quote-crypto`, `-check pck-crl,root-crl`, `-check tdx-policy -tdx-policy policy.json`.
 
-`verify -mode synthetic`은 quote signature, QE report signature, AK binding, synthetic PCK chain만
-검증합니다. Intel collateral, CRL, FMSPC/PCEID, TCB policy 검증은 의도적으로 수행하지 않습니다.
+`-check quote-crypto`는 PCK chain, quote signature, QE report signature, AK binding만 검증합니다.
+Intel collateral, CRL, FMSPC/PCEID, TCB policy 검증은 해당 check와 데이터 옵션을 명시했을 때만
+수행합니다.
 
 ## 현재 구현된 검증
 
@@ -102,7 +110,7 @@ Intel collateral 기반의 real quote 검증 경로로 동작합니다.
 | 옵션 | 기본값 | 설명 |
 | --- | --- | --- |
 | `-quote` | `test_data/quote.dat` | 검증할 Quote 바이너리 |
-| `-root` | `test_data/certs/Intel_SGX_Provisioning_Certification_RootCA.pem` | Intel Root CA 인증서 |
+| `-root` | `test_data/certs/Intel_SGX_Provisioning_Certification_RootCA.pem` | 선택 검증에 사용할 Root CA 인증서(Intel 또는 synthetic) |
 | `-tcbinfo` | `test_data/collateral/tcbinfo.json` | Intel TCB Info JSON |
 | `-qeidentity` | `test_data/collateral/qeidentity.json` | Intel QE/TDQE Identity JSON |
 | `-tcb-chain` | `test_data/certs/tcbSigningChain.pem` | TCB Info signing chain |
@@ -110,6 +118,7 @@ Intel collateral 기반의 real quote 검증 경로로 동작합니다.
 | `-pck-crl` | `test_data/certs/pck_platform_crl.der` | PCK leaf revocation 확인용 CRL |
 | `-root-crl` | `test_data/certs/IntelSGXRootCA.crl` | Root-issued intermediate/signing cert revocation 확인용 CRL |
 | `-tdx-policy` | 빈 값 | 선택적 TDX measurement policy JSON |
+| `-check` | 빈 값 | 선택 검증 항목. 예: `quote-crypto`, `pck-chain`, `quote-signatures`, `pck-crl`, `root-crl`, `tcbinfo`, `qeidentity`, `tdx-policy`, `intel-full` |
 | `-sample-time` | 빈 값 | 샘플 검증 기준 시각 (RFC3339) |
 | `-ignore-freshness` | `false` | collateral/CRL freshness 검사를 완화 |
 
@@ -118,14 +127,16 @@ Subcommand:
 | 명령 | 설명 |
 | --- | --- |
 | `verify` | 기본 Intel collateral 검증 경로. subcommand 없이 실행해도 같은 동작입니다. |
-| `synthesize` | 테스트용 non-Intel synthetic quote와 synthetic root를 생성합니다. |
+| `synthetic-root` | 테스트용 non-Intel synthetic root key/cert를 생성합니다. |
+| `synthetic-quote` | 기존 synthetic root로 테스트용 non-Intel synthetic quote를 생성합니다. |
 
 CLI는 Cobra 기반으로 구성되어 있어 command별 help를 확인할 수 있습니다.
 
 ```bash
 go run ./cmd/tdx-attest --help
 go run ./cmd/tdx-attest verify --help
-go run ./cmd/tdx-attest synthesize --help
+go run ./cmd/tdx-attest synthetic-root --help
+go run ./cmd/tdx-attest synthetic-quote --help
 ```
 
 ## 저장소 구조

@@ -35,6 +35,7 @@ type Config struct {
 	VerifyTime      time.Time
 	IgnoreFreshness bool
 	UsedSampleTime  bool
+	Checks          []string
 }
 
 func DefaultConfig() Config {
@@ -61,15 +62,15 @@ func RunVerify(cfg Config) error {
 
 	rootBytes, err := os.ReadFile(cfg.RootPath)
 	if err != nil {
-		return fmt.Errorf("read Intel root CA cert: %w", err)
+		return fmt.Errorf("read root CA cert: %w", err)
 	}
 
 	rootCert, err := parseOneCert(rootBytes)
 	if err != nil {
-		return fmt.Errorf("parse Intel root CA cert: %w", err)
+		return fmt.Errorf("parse root CA cert: %w", err)
 	}
 
-	_, err = VerifyQuoteWithCollateral(VerificationRequest{
+	result, err := VerifyQuoteWithCollateral(VerificationRequest{
 		QuoteBytes:      quoteBytes,
 		RootCert:        rootCert,
 		TCBInfoPath:     cfg.TCBInfoPath,
@@ -82,13 +83,28 @@ func RunVerify(cfg Config) error {
 		VerifyTime:      cfg.VerifyTime,
 		IgnoreFreshness: cfg.IgnoreFreshness,
 		UsedSampleTime:  cfg.UsedSampleTime,
+		Checks:          cfg.Checks,
 	})
 	if err != nil {
 		return err
 	}
 
-	printFinalSummary()
+	if len(cfg.Checks) == 0 {
+		printFinalSummary()
+	} else {
+		printSelectedSummary(result.Checks)
+	}
 	return nil
+}
+
+func printSelectedSummary(checks []CheckResult) {
+	fmt.Println()
+	fmt.Println("RESULT: selected quote verification checks are OK")
+	fmt.Println()
+	fmt.Println("Verified:")
+	for _, check := range checks {
+		fmt.Println(" ", check.Name)
+	}
 }
 
 func printFinalSummary() {

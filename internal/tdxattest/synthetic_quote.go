@@ -33,6 +33,13 @@ type SyntheticQuoteBundle struct {
 	PCKChainPEM []byte
 }
 
+// SyntheticRootBundle contains a synthetic test root CA certificate and the
+// private key that signs synthetic quote PCK intermediates.
+type SyntheticRootBundle struct {
+	RootKeyPEM  []byte
+	RootCertPEM []byte
+}
+
 // GenerateSyntheticQuote builds a minimal TDX-shaped quote that exercises the
 // same local cryptographic relationships as an Intel DCAP quote:
 //
@@ -46,11 +53,46 @@ func GenerateSyntheticQuote() (*SyntheticQuoteBundle, error) {
 	return generateSyntheticQuote(rand.Reader, time.Now().UTC())
 }
 
+// GenerateSyntheticRoot creates the reusable test-only root key material for
+// synthetic quote generation.
+func GenerateSyntheticRoot() (*SyntheticRootBundle, error) {
+	return generateSyntheticRoot(rand.Reader, time.Now().UTC())
+}
+
+// GenerateSyntheticQuoteWithRoot builds a synthetic quote signed below the
+// caller-provided synthetic test root. The root must be a CA certificate and
+// must match rootKey.
+func GenerateSyntheticQuoteWithRoot(rootKey *ecdsa.PrivateKey, rootCert *x509.Certificate) (*SyntheticQuoteBundle, error) {
+	return generateSyntheticQuoteWithRoot(rand.Reader, time.Now().UTC(), rootKey, rootCert)
+}
+
 func generateSyntheticQuote(random io.Reader, now time.Time) (*SyntheticQuoteBundle, error) {
-	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), random)
+	root, err := generateSyntheticRootMaterial(random, now)
 	if err != nil {
-		return nil, fmt.Errorf("generate synthetic root key: %w", err)
+		return nil, err
 	}
+	bundle, err := generateSyntheticQuoteWithRoot(random, now, root.key, root.cert)
+	if err != nil {
+		return nil, err
+	}
+	bundle.RootCertPEM = root.certPEM
+	return bundle, nil
+}
+
+func generateSyntheticQuoteWithRoot(random io.Reader, now time.Time, rootKey *ecdsa.PrivateKey, rootCert *x509.Certificate) (*SyntheticQuoteBundle, error) {
+	if rootKey == nil {
+		return nil, fmt.Errorf("synthetic root key is required")
+	}
+	if rootCert == nil {
+		return nil, fmt.Errorf("synthetic root certificate is required")
+	}
+	if !rootCert.IsCA {
+		return nil, fmt.Errorf("synthetic root certificate must be a CA")
+	}
+	if !rootKey.PublicKey.Equal(rootCert.PublicKey) {
+		return nil, fmt.Errorf("synthetic root key does not match root certificate")
+	}
+
 	intermediateKey, err := ecdsa.GenerateKey(elliptic.P256(), random)
 	if err != nil {
 		return nil, fmt.Errorf("generate synthetic intermediate key: %w", err)
@@ -64,10 +106,6 @@ func generateSyntheticQuote(random io.Reader, now time.Time) (*SyntheticQuoteBun
 		return nil, fmt.Errorf("generate synthetic attestation key: %w", err)
 	}
 
-	rootCert, rootDER, err := createSyntheticRootCert(random, rootKey, now)
-	if err != nil {
-		return nil, err
-	}
 	intermediateCert, intermediateDER, err := createSyntheticIntermediateCert(random, intermediateKey, rootKey, rootCert, now)
 	if err != nil {
 		return nil, err
@@ -112,8 +150,47 @@ func generateSyntheticQuote(random io.Reader, now time.Time) (*SyntheticQuoteBun
 
 	return &SyntheticQuoteBundle{
 		Quote:       quote,
-		RootCertPEM: pemEncodeCert(rootDER),
+		RootCertPEM: pemEncodeCert(rootCert.Raw),
 		PCKChainPEM: pckChainPEM,
+	}, nil
+}
+
+type syntheticRootMaterial struct {
+	key     *ecdsa.PrivateKey
+	cert    *x509.Certificate
+	keyPEM  []byte
+	certPEM []byte
+}
+
+func generateSyntheticRoot(random io.Reader, now time.Time) (*SyntheticRootBundle, error) {
+	root, err := generateSyntheticRootMaterial(random, now)
+	if err != nil {
+		return nil, err
+	}
+	return &SyntheticRootBundle{
+		RootKeyPEM:  root.keyPEM,
+		RootCertPEM: root.certPEM,
+	}, nil
+}
+
+func generateSyntheticRootMaterial(random io.Reader, now time.Time) (*syntheticRootMaterial, error) {
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), random)
+	if err != nil {
+		return nil, fmt.Errorf("generate synthetic root key: %w", err)
+	}
+	rootCert, rootDER, err := createSyntheticRootCert(random, rootKey, now)
+	if err != nil {
+		return nil, err
+	}
+	rootKeyPEM, err := pemEncodeECPrivateKey(rootKey)
+	if err != nil {
+		return nil, err
+	}
+	return &syntheticRootMaterial{
+		key:     rootKey,
+		cert:    rootCert,
+		keyPEM:  rootKeyPEM,
+		certPEM: pemEncodeCert(rootDER),
 	}, nil
 }
 
@@ -218,6 +295,14 @@ func createSyntheticPCKCert(random io.Reader, key *ecdsa.PrivateKey, issuerKey *
 
 func pemEncodeCert(der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func pemEncodeECPrivateKey(key *ecdsa.PrivateKey) ([]byte, error) {
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("marshal synthetic root key: %w", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), nil
 }
 
 func marshalP256PublicKeyRaw(pub *ecdsa.PublicKey) []byte {

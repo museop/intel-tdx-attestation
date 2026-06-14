@@ -3,7 +3,20 @@ package tdxattest
 import (
 	"crypto/x509"
 	"fmt"
+	"strings"
 	"time"
+)
+
+const (
+	CheckIntelFull       = "intel-full"
+	CheckPCKChain        = "pck-chain"
+	CheckQuoteSignatures = "quote-signatures"
+	CheckQuoteCrypto     = "quote-crypto"
+	CheckPCKCRL          = "pck-crl"
+	CheckRootCRL         = "root-crl"
+	CheckTCBInfo         = "tcbinfo"
+	CheckQEIdentity      = "qeidentity"
+	CheckTDXPolicy       = "tdx-policy"
 )
 
 type CheckResult struct {
@@ -23,6 +36,7 @@ type VerificationRequest struct {
 	VerifyTime      time.Time
 	IgnoreFreshness bool
 	UsedSampleTime  bool
+	Checks          []string
 }
 
 type VerificationResult struct {
@@ -38,16 +52,32 @@ type quoteEvidence struct {
 	PCKLeaf         *x509.Certificate
 }
 
+type verificationPlan struct {
+	pckChain       bool
+	quoteSignature bool
+	pckCRL         bool
+	rootCRL        bool
+	tcbInfo        bool
+	qeIdentity     bool
+	tdxPolicy      bool
+}
+
 func (r *VerificationResult) addCheck(name string) {
 	r.Checks = append(r.Checks, CheckResult{Name: name})
 }
 
-// VerifyQuoteWithCollateral executes the full Intel-style local verification
-// pipeline. It returns structured state for tests and future APIs while keeping
-// the current educational CLI output stable.
+// VerifyQuoteWithCollateral executes the selected local verification checks.
+// With no explicit Checks it preserves the default full Intel-style pipeline.
+// It returns structured state for tests and future APIs while keeping the
+// current educational CLI output stable.
 func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, error) {
 	if req.RootCert == nil {
 		return nil, fmt.Errorf("root certificate is required")
+	}
+
+	plan, err := resolveVerificationPlan(req.Checks, req.TDXPolicyPath)
+	if err != nil {
+		return nil, err
 	}
 
 	result := &VerificationResult{}
@@ -55,7 +85,7 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 		fmt.Println("[warn] using sample verification time:", req.VerifyTime.Format(time.RFC3339))
 	}
 
-	fmt.Println("[Intel Root CA]")
+	fmt.Println("[Root CA]")
 	printCert(req.RootCert)
 
 	evidence, err := parseAndVerifyQuoteEvidence(req, true)
@@ -64,47 +94,62 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 	result.ParsedQuote = evidence.ParsedQuote
 	result.TDXMeasurements = evidence.TDXMeasurements
-	result.addCheck("PCK certificate chain")
+	if plan.pckChain {
+		result.addCheck("PCK certificate chain")
+	}
 
 	pckChain := evidence.PCKChain
 	pckLeaf := evidence.PCKLeaf
 
-	if err := verifyPCKCRL(req.PCKCRLPath, pckChain[1], pckLeaf, req.VerifyTime, req.IgnoreFreshness); err != nil {
-		return nil, fmt.Errorf("verify PCK CRL: %w", err)
+	if plan.pckCRL {
+		if err := verifyPCKCRL(req.PCKCRLPath, pckChain[1], pckLeaf, req.VerifyTime, req.IgnoreFreshness); err != nil {
+			return nil, fmt.Errorf("verify PCK CRL: %w", err)
+		}
+		fmt.Println("[2] PCK CRL signature / freshness / revocation verification: OK")
+		result.addCheck("PCK CRL")
 	}
-	fmt.Println("[2] PCK CRL signature / freshness / revocation verification: OK")
-	result.addCheck("PCK CRL")
 
-	if err := verifyRootCACRL(req.RootCRLPath, req.RootCert, []*x509.Certificate{pckChain[1]}, req.VerifyTime, req.IgnoreFreshness); err != nil {
-		return nil, fmt.Errorf("verify Root CA CRL for PCK chain: %w", err)
+	if plan.rootCRL {
+		if err := verifyRootCACRL(req.RootCRLPath, req.RootCert, []*x509.Certificate{pckChain[1]}, req.VerifyTime, req.IgnoreFreshness); err != nil {
+			return nil, fmt.Errorf("verify Root CA CRL for PCK chain: %w", err)
+		}
+		fmt.Println("[3] Root CA CRL verification for PCK intermediate: OK")
+		result.addCheck("Root CA CRL for PCK intermediate")
 	}
-	fmt.Println("[3] Root CA CRL verification for PCK intermediate: OK")
-	result.addCheck("Root CA CRL for PCK intermediate")
 
-	if err := verifyQuoteLocalSignatures(evidence, true); err != nil {
-		return nil, err
+	if plan.quoteSignature {
+		if err := verifyQuoteLocalSignatures(evidence, true); err != nil {
+			return nil, err
+		}
+		result.addCheck("QE/TDQE report signature")
+		result.addCheck("AK hash binding")
+		result.addCheck("TDX/SGX quote signature")
 	}
-	result.addCheck("QE/TDQE report signature")
-	result.addCheck("AK hash binding")
-	result.addCheck("TDX/SGX quote signature")
 
-	if err := verifyTCBInfoCollateral(req.TCBInfoPath, req.TCBChainPath, req.RootCRLPath, req.RootCert, pckLeaf, result.TDXMeasurements, req.VerifyTime, req.IgnoreFreshness); err != nil {
-		return nil, fmt.Errorf("verify TCB Info collateral: %w", err)
+	if plan.tcbInfo {
+		if err := verifyTCBInfoCollateral(req.TCBInfoPath, req.TCBChainPath, req.RootCRLPath, req.RootCert, pckLeaf, result.TDXMeasurements, req.VerifyTime, req.IgnoreFreshness); err != nil {
+			return nil, fmt.Errorf("verify TCB Info collateral: %w", err)
+		}
+		fmt.Println("[7] TCB Info signature / chain / freshness / FMSPC / TCB level verification: OK")
+		result.addCheck("TCB Info collateral")
 	}
-	fmt.Println("[7] TCB Info signature / chain / freshness / FMSPC / TCB level verification: OK")
-	result.addCheck("TCB Info collateral")
 
-	if err := verifyQEIdentityCollateral(req.QEIdentityPath, req.QEChainPath, req.RootCRLPath, req.RootCert, evidence.ParsedQuote.QEReport, req.VerifyTime, req.IgnoreFreshness); err != nil {
-		return nil, fmt.Errorf("verify QE/TDQE Identity collateral: %w", err)
+	if plan.qeIdentity {
+		if err := verifyQEIdentityCollateral(req.QEIdentityPath, req.QEChainPath, req.RootCRLPath, req.RootCert, evidence.ParsedQuote.QEReport, req.VerifyTime, req.IgnoreFreshness); err != nil {
+			return nil, fmt.Errorf("verify QE/TDQE Identity collateral: %w", err)
+		}
+		fmt.Println("[8] QE/TDQE Identity signature / chain / freshness verification: OK")
+		result.addCheck("QE/TDQE Identity collateral")
 	}
-	fmt.Println("[8] QE/TDQE Identity signature / chain / freshness verification: OK")
-	result.addCheck("QE/TDQE Identity collateral")
 
-	policy, err := loadTDXPolicy(req.TDXPolicyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load TDX policy: %w", err)
-	}
-	if policy != nil {
+	if plan.tdxPolicy {
+		policy, err := loadTDXPolicy(req.TDXPolicyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load TDX policy: %w", err)
+		}
+		if policy == nil {
+			return nil, fmt.Errorf("TDX policy check requires -tdx-policy")
+		}
 		if result.TDXMeasurements == nil {
 			return nil, fmt.Errorf("TDX policy was provided but quote is not a TDX quote")
 		}
@@ -116,6 +161,76 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 
 	return result, nil
+}
+
+func resolveVerificationPlan(checks []string, tdxPolicyPath string) (verificationPlan, error) {
+	if len(checks) == 0 {
+		return verificationPlan{
+			pckChain:       true,
+			quoteSignature: true,
+			pckCRL:         true,
+			rootCRL:        true,
+			tcbInfo:        true,
+			qeIdentity:     true,
+			tdxPolicy:      tdxPolicyPath != "",
+		}, nil
+	}
+
+	plan := verificationPlan{}
+	for _, raw := range checks {
+		check := strings.ToLower(strings.TrimSpace(raw))
+		if check == "" {
+			continue
+		}
+		switch check {
+		case "all", CheckIntelFull:
+			plan.pckChain = true
+			plan.quoteSignature = true
+			plan.pckCRL = true
+			plan.rootCRL = true
+			plan.tcbInfo = true
+			plan.qeIdentity = true
+			plan.tdxPolicy = tdxPolicyPath != ""
+		case CheckPCKChain:
+			plan.pckChain = true
+		case CheckQuoteSignatures:
+			plan.quoteSignature = true
+		case CheckQuoteCrypto:
+			plan.pckChain = true
+			plan.quoteSignature = true
+		case CheckPCKCRL:
+			plan.pckCRL = true
+		case CheckRootCRL:
+			plan.rootCRL = true
+		case CheckTCBInfo:
+			plan.tcbInfo = true
+		case CheckQEIdentity:
+			plan.qeIdentity = true
+		case CheckTDXPolicy:
+			plan.tdxPolicy = true
+		default:
+			return verificationPlan{}, fmt.Errorf("unsupported verification check %q; supported checks: %s", raw, strings.Join(supportedVerificationChecks(), ", "))
+		}
+	}
+
+	if plan.quoteSignature || plan.pckCRL || plan.rootCRL || plan.tcbInfo || plan.qeIdentity || plan.tdxPolicy {
+		plan.pckChain = true
+	}
+	return plan, nil
+}
+
+func supportedVerificationChecks() []string {
+	return []string{
+		CheckQuoteCrypto,
+		CheckPCKChain,
+		CheckQuoteSignatures,
+		CheckPCKCRL,
+		CheckRootCRL,
+		CheckTCBInfo,
+		CheckQEIdentity,
+		CheckTDXPolicy,
+		CheckIntelFull,
+	}
 }
 
 func parseAndVerifyQuoteEvidence(req VerificationRequest, printDetails bool) (*quoteEvidence, error) {

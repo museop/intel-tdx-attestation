@@ -7,7 +7,7 @@
 일반적인 성공 실행은 아래 순서로 진행됩니다.
 
 ```text
-[Intel Root CA]
+[Root CA]
 [Quote]
 [TDX Report measurements]
 [PCK certificates from quote]
@@ -19,7 +19,7 @@ Verified:
 Not verified yet:
 ```
 
-## 1. `[Intel Root CA]`
+## 1. `[Root CA]`
 
 여기서는 verifier가 trust anchor로 사용하는 Root CA 인증서 정보를 출력합니다.
 
