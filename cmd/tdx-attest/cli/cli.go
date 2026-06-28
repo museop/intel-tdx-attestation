@@ -122,6 +122,8 @@ func addVerifyFlags(cmd *cobra.Command, cfg *tdxattest.Config) {
 	var sampleTime string
 	cmd.Flags().StringVar(&cfg.QuotePath, "quote", cfg.QuotePath, "TDX/SGX DCAP quote file")
 	cmd.Flags().StringVar(&cfg.RootPath, "root", cfg.RootPath, "root CA certificate PEM/DER for selected checks")
+	cmd.Flags().StringVar(&cfg.CollateralSource, "collateral-source", cfg.CollateralSource, "collateral source: local or pcs")
+	cmd.Flags().StringVar(&cfg.PCSBaseURL, "pcs-base-url", cfg.PCSBaseURL, "Intel PCS base URL or test PCS server URL")
 	cmd.Flags().StringVar(&cfg.TCBInfoPath, "tcbinfo", cfg.TCBInfoPath, "Intel TCB Info JSON")
 	cmd.Flags().StringVar(&cfg.QEIdentityPath, "qeidentity", cfg.QEIdentityPath, "Intel QE/TDQE Identity JSON")
 	cmd.Flags().StringVar(&cfg.TCBChainPath, "tcb-chain", cfg.TCBChainPath, "Intel TCB signing cert chain PEM")

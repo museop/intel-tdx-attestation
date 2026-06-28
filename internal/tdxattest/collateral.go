@@ -102,7 +102,18 @@ func verifyTCBInfoCollateral(tcbInfoPath string, tcbChainPath string, rootCRLPat
 	if err != nil {
 		return fmt.Errorf("read TCB Info JSON: %w", err)
 	}
+	chainRaw, err := os.ReadFile(tcbChainPath)
+	if err != nil {
+		return fmt.Errorf("read TCB signing chain: %w", err)
+	}
+	rootCRLRaw, err := os.ReadFile(rootCRLPath)
+	if err != nil {
+		return fmt.Errorf("read Root CA CRL: %w", err)
+	}
+	return verifyTCBInfoCollateralBytes(raw, chainRaw, rootCRLRaw, rootCert, pckLeaf, tdxMeasurements, verifyTime, ignoreFreshness)
+}
 
+func verifyTCBInfoCollateralBytes(raw []byte, chainRaw []byte, rootCRLRaw []byte, rootCert *x509.Certificate, pckLeaf *x509.Certificate, tdxMeasurements *TDXMeasurements, verifyTime time.Time, ignoreFreshness bool) error {
 	var signed SignedTCBInfo
 	if err := json.Unmarshal(raw, &signed); err != nil {
 		return fmt.Errorf("parse signed TCB Info: %w", err)
@@ -111,9 +122,9 @@ func verifyTCBInfoCollateral(tcbInfoPath string, tcbChainPath string, rootCRLPat
 		return fmt.Errorf("tcbInfo field missing")
 	}
 
-	chain, err := loadCertChain(tcbChainPath)
+	chain, err := parsePEMCerts(chainRaw)
 	if err != nil {
-		return fmt.Errorf("load TCB signing chain: %w", err)
+		return fmt.Errorf("parse TCB signing chain: %w", err)
 	}
 	if len(chain) == 0 {
 		return fmt.Errorf("empty TCB signing chain")
@@ -123,7 +134,7 @@ func verifyTCBInfoCollateral(tcbInfoPath string, tcbChainPath string, rootCRLPat
 	if err := verifyCertChain(signingCert, chain[1:], rootCert, verifyTime); err != nil {
 		return fmt.Errorf("verify TCB signing cert chain: %w", err)
 	}
-	if err := verifyRootCACRL(rootCRLPath, rootCert, []*x509.Certificate{signingCert}, verifyTime, ignoreFreshness); err != nil {
+	if err := verifyRootCACRLBytes(rootCRLRaw, rootCert, []*x509.Certificate{signingCert}, verifyTime, ignoreFreshness); err != nil {
 		return fmt.Errorf("verify Root CA CRL for TCB signing cert: %w", err)
 	}
 	if err := verifyIntelJSONSignature(signingCert, signed.TCBInfo, signed.Signature); err != nil {
@@ -196,7 +207,18 @@ func verifyQEIdentityCollateral(qeIdentityPath string, qeChainPath string, rootC
 	if err != nil {
 		return fmt.Errorf("read QE Identity JSON: %w", err)
 	}
+	chainRaw, err := os.ReadFile(qeChainPath)
+	if err != nil {
+		return fmt.Errorf("read QE identity signing chain: %w", err)
+	}
+	rootCRLRaw, err := os.ReadFile(rootCRLPath)
+	if err != nil {
+		return fmt.Errorf("read Root CA CRL: %w", err)
+	}
+	return verifyQEIdentityCollateralBytes(raw, chainRaw, rootCRLRaw, rootCert, qeReport, verifyTime, ignoreFreshness)
+}
 
+func verifyQEIdentityCollateralBytes(raw []byte, chainRaw []byte, rootCRLRaw []byte, rootCert *x509.Certificate, qeReport []byte, verifyTime time.Time, ignoreFreshness bool) error {
 	var signed SignedQEIdentityGeneric
 	if err := json.Unmarshal(raw, &signed); err != nil {
 		return fmt.Errorf("parse signed QE Identity: %w", err)
@@ -212,9 +234,9 @@ func verifyQEIdentityCollateral(qeIdentityPath string, qeChainPath string, rootC
 		return fmt.Errorf("neither enclaveIdentity nor tdqeIdentity field found")
 	}
 
-	chain, err := loadCertChain(qeChainPath)
+	chain, err := parsePEMCerts(chainRaw)
 	if err != nil {
-		return fmt.Errorf("load QE identity signing chain: %w", err)
+		return fmt.Errorf("parse QE identity signing chain: %w", err)
 	}
 	if len(chain) == 0 {
 		return fmt.Errorf("empty QE identity signing chain")
@@ -224,7 +246,7 @@ func verifyQEIdentityCollateral(qeIdentityPath string, qeChainPath string, rootC
 	if err := verifyCertChain(signingCert, chain[1:], rootCert, verifyTime); err != nil {
 		return fmt.Errorf("verify QE identity signing cert chain: %w", err)
 	}
-	if err := verifyRootCACRL(rootCRLPath, rootCert, []*x509.Certificate{signingCert}, verifyTime, ignoreFreshness); err != nil {
+	if err := verifyRootCACRLBytes(rootCRLRaw, rootCert, []*x509.Certificate{signingCert}, verifyTime, ignoreFreshness); err != nil {
 		return fmt.Errorf("verify Root CA CRL for QE identity signing cert: %w", err)
 	}
 	if err := verifyIntelJSONSignature(signingCert, identityRaw, signed.Signature); err != nil {

@@ -1,6 +1,7 @@
 package tdxattest
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"strings"
@@ -24,19 +25,22 @@ type CheckResult struct {
 }
 
 type VerificationRequest struct {
-	QuoteBytes      []byte
-	RootCert        *x509.Certificate
-	TCBInfoPath     string
-	QEIdentityPath  string
-	TCBChainPath    string
-	QEChainPath     string
-	PCKCRLPath      string
-	RootCRLPath     string
-	TDXPolicyPath   string
-	VerifyTime      time.Time
-	IgnoreFreshness bool
-	UsedSampleTime  bool
-	Checks          []string
+	QuoteBytes       []byte
+	RootCert         *x509.Certificate
+	CollateralSource string
+	PCSBaseURL       string
+	Collateral       *CollateralBundle
+	TCBInfoPath      string
+	QEIdentityPath   string
+	TCBChainPath     string
+	QEChainPath      string
+	PCKCRLPath       string
+	RootCRLPath      string
+	TDXPolicyPath    string
+	VerifyTime       time.Time
+	IgnoreFreshness  bool
+	UsedSampleTime   bool
+	Checks           []string
 }
 
 type VerificationResult struct {
@@ -74,6 +78,13 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	if req.RootCert == nil {
 		return nil, fmt.Errorf("root certificate is required")
 	}
+	collateralSource := strings.ToLower(strings.TrimSpace(req.CollateralSource))
+	if collateralSource == "" {
+		collateralSource = CollateralSourceLocal
+	}
+	if collateralSource != CollateralSourceLocal && collateralSource != CollateralSourcePCS {
+		return nil, fmt.Errorf("unsupported collateral source %q; supported sources: %s, %s", req.CollateralSource, CollateralSourceLocal, CollateralSourcePCS)
+	}
 
 	plan, err := resolveVerificationPlan(req.Checks, req.TDXPolicyPath)
 	if err != nil {
@@ -100,9 +111,20 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 
 	pckChain := evidence.PCKChain
 	pckLeaf := evidence.PCKLeaf
+	collateral := req.Collateral
+	if collateralSource == CollateralSourcePCS && (plan.pckCRL || plan.rootCRL || plan.tcbInfo || plan.qeIdentity) {
+		fmt.Println()
+		fmt.Println("[PCS]")
+		fmt.Println("Fetching Intel collateral from PCS")
+		collateral, err = NewPCSClient(req.PCSBaseURL).FetchCollateral(context.Background(), req.RootCert, pckChain, pckLeaf)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println("Collateral source: Intel PCS")
+	}
 
 	if plan.pckCRL {
-		if err := verifyPCKCRL(req.PCKCRLPath, pckChain[1], pckLeaf, req.VerifyTime, req.IgnoreFreshness); err != nil {
+		if err := verifyPCKCRLFromRequest(req, collateral, pckChain[1], pckLeaf); err != nil {
 			return nil, fmt.Errorf("verify PCK CRL: %w", err)
 		}
 		fmt.Println("[2] PCK CRL signature / freshness / revocation verification: OK")
@@ -110,7 +132,7 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 
 	if plan.rootCRL {
-		if err := verifyRootCACRL(req.RootCRLPath, req.RootCert, []*x509.Certificate{pckChain[1]}, req.VerifyTime, req.IgnoreFreshness); err != nil {
+		if err := verifyRootCACRLFromRequest(req, collateral, []*x509.Certificate{pckChain[1]}); err != nil {
 			return nil, fmt.Errorf("verify Root CA CRL for PCK chain: %w", err)
 		}
 		fmt.Println("[3] Root CA CRL verification for PCK intermediate: OK")
@@ -127,7 +149,7 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 
 	if plan.tcbInfo {
-		if err := verifyTCBInfoCollateral(req.TCBInfoPath, req.TCBChainPath, req.RootCRLPath, req.RootCert, pckLeaf, result.TDXMeasurements, req.VerifyTime, req.IgnoreFreshness); err != nil {
+		if err := verifyTCBInfoCollateralFromRequest(req, collateral, pckLeaf, result.TDXMeasurements); err != nil {
 			return nil, fmt.Errorf("verify TCB Info collateral: %w", err)
 		}
 		fmt.Println("[7] TCB Info signature / chain / freshness / FMSPC / TCB level verification: OK")
@@ -135,7 +157,7 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 
 	if plan.qeIdentity {
-		if err := verifyQEIdentityCollateral(req.QEIdentityPath, req.QEChainPath, req.RootCRLPath, req.RootCert, evidence.ParsedQuote.QEReport, req.VerifyTime, req.IgnoreFreshness); err != nil {
+		if err := verifyQEIdentityCollateralFromRequest(req, collateral, evidence.ParsedQuote.QEReport); err != nil {
 			return nil, fmt.Errorf("verify QE/TDQE Identity collateral: %w", err)
 		}
 		fmt.Println("[8] QE/TDQE Identity signature / chain / freshness verification: OK")
@@ -161,6 +183,58 @@ func VerifyQuoteWithCollateral(req VerificationRequest) (*VerificationResult, er
 	}
 
 	return result, nil
+}
+
+func verifyPCKCRLFromRequest(req VerificationRequest, collateral *CollateralBundle, issuerCert *x509.Certificate, pckLeaf *x509.Certificate) error {
+	if collateral != nil {
+		if len(collateral.PCKCRL) == 0 {
+			return fmt.Errorf("collateral bundle missing PCK CRL")
+		}
+		return verifyPCKCRLBytes(collateral.PCKCRL, issuerCert, pckLeaf, req.VerifyTime, req.IgnoreFreshness)
+	}
+	return verifyPCKCRL(req.PCKCRLPath, issuerCert, pckLeaf, req.VerifyTime, req.IgnoreFreshness)
+}
+
+func verifyRootCACRLFromRequest(req VerificationRequest, collateral *CollateralBundle, certs []*x509.Certificate) error {
+	if collateral != nil {
+		if len(collateral.RootCRL) == 0 {
+			return fmt.Errorf("collateral bundle missing Root CA CRL")
+		}
+		return verifyRootCACRLBytes(collateral.RootCRL, req.RootCert, certs, req.VerifyTime, req.IgnoreFreshness)
+	}
+	return verifyRootCACRL(req.RootCRLPath, req.RootCert, certs, req.VerifyTime, req.IgnoreFreshness)
+}
+
+func verifyTCBInfoCollateralFromRequest(req VerificationRequest, collateral *CollateralBundle, pckLeaf *x509.Certificate, tdxMeasurements *TDXMeasurements) error {
+	if collateral != nil {
+		if len(collateral.TCBInfoJSON) == 0 {
+			return fmt.Errorf("collateral bundle missing TCB Info JSON")
+		}
+		if len(collateral.TCBSigningChainPEM) == 0 {
+			return fmt.Errorf("collateral bundle missing TCB signing chain")
+		}
+		if len(collateral.RootCRL) == 0 {
+			return fmt.Errorf("collateral bundle missing Root CA CRL")
+		}
+		return verifyTCBInfoCollateralBytes(collateral.TCBInfoJSON, collateral.TCBSigningChainPEM, collateral.RootCRL, req.RootCert, pckLeaf, tdxMeasurements, req.VerifyTime, req.IgnoreFreshness)
+	}
+	return verifyTCBInfoCollateral(req.TCBInfoPath, req.TCBChainPath, req.RootCRLPath, req.RootCert, pckLeaf, tdxMeasurements, req.VerifyTime, req.IgnoreFreshness)
+}
+
+func verifyQEIdentityCollateralFromRequest(req VerificationRequest, collateral *CollateralBundle, qeReport []byte) error {
+	if collateral != nil {
+		if len(collateral.QEIdentityJSON) == 0 {
+			return fmt.Errorf("collateral bundle missing QE identity JSON")
+		}
+		if len(collateral.QEIdentityChainPEM) == 0 {
+			return fmt.Errorf("collateral bundle missing QE identity signing chain")
+		}
+		if len(collateral.RootCRL) == 0 {
+			return fmt.Errorf("collateral bundle missing Root CA CRL")
+		}
+		return verifyQEIdentityCollateralBytes(collateral.QEIdentityJSON, collateral.QEIdentityChainPEM, collateral.RootCRL, req.RootCert, qeReport, req.VerifyTime, req.IgnoreFreshness)
+	}
+	return verifyQEIdentityCollateral(req.QEIdentityPath, req.QEChainPath, req.RootCRLPath, req.RootCert, qeReport, req.VerifyTime, req.IgnoreFreshness)
 }
 
 func resolveVerificationPlan(checks []string, tdxPolicyPath string) (verificationPlan, error) {

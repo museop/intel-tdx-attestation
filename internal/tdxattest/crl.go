@@ -16,6 +16,11 @@ func loadRevocationList(path string) (*x509.RevocationList, error) {
 		return nil, err
 	}
 
+	return parseRevocationList(raw)
+}
+
+// parseRevocationList는 파일/네트워크 등 출처와 무관하게 PEM 또는 DER 형식의 CRL을 파싱합니다.
+func parseRevocationList(raw []byte) (*x509.RevocationList, error) {
 	if block, _ := pem.Decode(raw); block != nil {
 		raw = block.Bytes
 	}
@@ -31,7 +36,18 @@ func verifyPCKCRL(crlPath string, issuerCert *x509.Certificate, pckLeaf *x509.Ce
 	if err != nil {
 		return fmt.Errorf("load PCK CRL: %w", err)
 	}
+	return verifyParsedPCKCRL(crl, issuerCert, pckLeaf, verifyTime, ignoreFreshness)
+}
 
+func verifyPCKCRLBytes(raw []byte, issuerCert *x509.Certificate, pckLeaf *x509.Certificate, verifyTime time.Time, ignoreFreshness bool) error {
+	crl, err := parseRevocationList(raw)
+	if err != nil {
+		return fmt.Errorf("parse PCK CRL: %w", err)
+	}
+	return verifyParsedPCKCRL(crl, issuerCert, pckLeaf, verifyTime, ignoreFreshness)
+}
+
+func verifyParsedPCKCRL(crl *x509.RevocationList, issuerCert *x509.Certificate, pckLeaf *x509.Certificate, verifyTime time.Time, ignoreFreshness bool) error {
 	if err := crl.CheckSignatureFrom(issuerCert); err != nil {
 		return fmt.Errorf("verify PCK CRL signature: %w", err)
 	}
@@ -85,7 +101,18 @@ func verifyRootCACRL(crlPath string, rootCert *x509.Certificate, certs []*x509.C
 	if err != nil {
 		return fmt.Errorf("load Root CA CRL: %w", err)
 	}
+	return verifyParsedRootCACRL(crl, rootCert, certs, verifyTime, ignoreFreshness)
+}
 
+func verifyRootCACRLBytes(raw []byte, rootCert *x509.Certificate, certs []*x509.Certificate, verifyTime time.Time, ignoreFreshness bool) error {
+	crl, err := parseRevocationList(raw)
+	if err != nil {
+		return fmt.Errorf("parse Root CA CRL: %w", err)
+	}
+	return verifyParsedRootCACRL(crl, rootCert, certs, verifyTime, ignoreFreshness)
+}
+
+func verifyParsedRootCACRL(crl *x509.RevocationList, rootCert *x509.Certificate, certs []*x509.Certificate, verifyTime time.Time, ignoreFreshness bool) error {
 	if err := crl.CheckSignatureFrom(rootCert); err != nil {
 		return fmt.Errorf("verify Root CA CRL signature: %w", err)
 	}

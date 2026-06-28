@@ -23,33 +23,37 @@ const (
 // verifier는 Quote 같은 증거 데이터와, 인증서/CRL/서명된 JSON 같은 collateral을
 // 함께 받아야 합니다. 이 값을 한 구조체로 묶어 두면 run()의 검증 흐름을 읽기 쉬워집니다.
 type Config struct {
-	QuotePath       string
-	RootPath        string
-	TCBInfoPath     string
-	QEIdentityPath  string
-	TCBChainPath    string
-	QEChainPath     string
-	PCKCRLPath      string
-	RootCRLPath     string
-	TDXPolicyPath   string
-	VerifyTime      time.Time
-	IgnoreFreshness bool
-	UsedSampleTime  bool
-	Checks          []string
+	QuotePath        string
+	RootPath         string
+	CollateralSource string
+	PCSBaseURL       string
+	TCBInfoPath      string
+	QEIdentityPath   string
+	TCBChainPath     string
+	QEChainPath      string
+	PCKCRLPath       string
+	RootCRLPath      string
+	TDXPolicyPath    string
+	VerifyTime       time.Time
+	IgnoreFreshness  bool
+	UsedSampleTime   bool
+	Checks           []string
 }
 
 func DefaultConfig() Config {
 	return Config{
-		QuotePath:      defaultQuotePath,
-		RootPath:       defaultRootPath,
-		TCBInfoPath:    defaultTCBInfoPath,
-		QEIdentityPath: defaultQEIdentityPath,
-		TCBChainPath:   defaultTCBChainPath,
-		QEChainPath:    defaultQEChainPath,
-		PCKCRLPath:     defaultPCKCRLPath,
-		RootCRLPath:    defaultRootCRLPath,
-		TDXPolicyPath:  defaultTDXPolicyPath,
-		VerifyTime:     time.Now().UTC(),
+		QuotePath:        defaultQuotePath,
+		RootPath:         defaultRootPath,
+		CollateralSource: CollateralSourceLocal,
+		PCSBaseURL:       defaultPCSBaseURL,
+		TCBInfoPath:      defaultTCBInfoPath,
+		QEIdentityPath:   defaultQEIdentityPath,
+		TCBChainPath:     defaultTCBChainPath,
+		QEChainPath:      defaultQEChainPath,
+		PCKCRLPath:       defaultPCKCRLPath,
+		RootCRLPath:      defaultRootCRLPath,
+		TDXPolicyPath:    defaultTDXPolicyPath,
+		VerifyTime:       time.Now().UTC(),
 	}
 }
 
@@ -71,19 +75,21 @@ func RunVerify(cfg Config) error {
 	}
 
 	result, err := VerifyQuoteWithCollateral(VerificationRequest{
-		QuoteBytes:      quoteBytes,
-		RootCert:        rootCert,
-		TCBInfoPath:     cfg.TCBInfoPath,
-		QEIdentityPath:  cfg.QEIdentityPath,
-		TCBChainPath:    cfg.TCBChainPath,
-		QEChainPath:     cfg.QEChainPath,
-		PCKCRLPath:      cfg.PCKCRLPath,
-		RootCRLPath:     cfg.RootCRLPath,
-		TDXPolicyPath:   cfg.TDXPolicyPath,
-		VerifyTime:      cfg.VerifyTime,
-		IgnoreFreshness: cfg.IgnoreFreshness,
-		UsedSampleTime:  cfg.UsedSampleTime,
-		Checks:          cfg.Checks,
+		QuoteBytes:       quoteBytes,
+		RootCert:         rootCert,
+		CollateralSource: cfg.CollateralSource,
+		PCSBaseURL:       cfg.PCSBaseURL,
+		TCBInfoPath:      cfg.TCBInfoPath,
+		QEIdentityPath:   cfg.QEIdentityPath,
+		TCBChainPath:     cfg.TCBChainPath,
+		QEChainPath:      cfg.QEChainPath,
+		PCKCRLPath:       cfg.PCKCRLPath,
+		RootCRLPath:      cfg.RootCRLPath,
+		TDXPolicyPath:    cfg.TDXPolicyPath,
+		VerifyTime:       cfg.VerifyTime,
+		IgnoreFreshness:  cfg.IgnoreFreshness,
+		UsedSampleTime:   cfg.UsedSampleTime,
+		Checks:           cfg.Checks,
 	})
 	if err != nil {
 		return err
